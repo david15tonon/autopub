@@ -4,61 +4,91 @@ import time
 from datetime import datetime, timedelta
 from git import Repo
 
-# Configuration spécifique à votre dépôt
-REPO_NAME = "david15tonon/autopub"  # Modifié selon votre image
-WORK_DIR = "/workspaces/autopub"     # Chemin dans Codespace
-COMMIT_FILE = "daily_update.md"      # Fichier à modifier pour les commits
+# Configuration
+REPO_PATH = "/workspaces/autopub"  # Chemin vers votre dépôt
+LOG_FILE = "maintenance_log.md"    # Fichier de suivi
+GIT_USER = "Maintenance Bot"       # Nom pour les commits
+GIT_EMAIL = "maintenance@example.com"  # Email pour les commits
+WORKING_HOURS = (18, 23)          # Plage horaire (18h-23h)
 
-def setup_repo():
-    # Initialiser le dépôt
-    if not os.path.exists(WORK_DIR):
-        repo_url = f"https://github.com/{REPO_NAME}.git"
-        repo = Repo.clone_from(repo_url, WORK_DIR)
-    else:
-        repo = Repo(WORK_DIR)
-    
-    # Configuration Git minimale
-    with repo.config_writer() as git_config:
-        git_config.set_value("user", "name", "Maintenance Bot")
-        git_config.set_value("user", "email", "bot@example.com")
-    
-    return repo
+class MaintenanceManager:
+    def __init__(self):
+        self.repo = self.setup_repo()
+        self.end_date = datetime.now() + timedelta(days=4)  # Jusqu'à vendredi
 
-def make_daily_commit(repo):
-    # Créer/modifier le fichier de suivi
-    with open(os.path.join(WORK_DIR, COMMIT_FILE), "a+") as f:
-        f.write(f"- Maintenance update {datetime.now().strftime('%Y-%m-%d %H:%M')}\n")
-    
-    # Commit et push
-    repo.git.add(COMMIT_FILE)
-    commit_msg = f"Daily maintenance {datetime.now().strftime('%d/%m')}"
-    repo.index.commit(commit_msg)
-    repo.git.push()
-    print(f"Commit effectué: {commit_msg}")
+    def setup_repo(self):
+        """Initialise le dépôt Git avec la configuration de base"""
+        repo = Repo(REPO_PATH)
+        with repo.config_writer() as config:
+            config.set_value("user", "name", GIT_USER)
+            config.set_value("user", "email", GIT_EMAIL)
+        return repo
 
-def main():
-    repo = setup_repo()
-    end_date = datetime.now() + timedelta(days=7)  
-    
-    try:
-        while datetime.now() < end_date:
-            make_daily_commit(repo)
+    def make_commit(self):
+        """Effectue un commit valide pour maintenir le streak"""
+        try:
+            # Crée/modifie le fichier de log
+            with open(os.path.join(REPO_PATH, LOG_FILE), "a+") as f:
+                f.write(f"- Maintenance check at {datetime.now().strftime('%Y-%m-%d %H:%M')}\n")
+
+            # Ajoute les modifications
+            self.repo.git.add(LOG_FILE)
             
-            # Prochain commit entre 21h et 23h
-            next_run = datetime.now().replace(
-                hour=21 + hash(datetime.now().date()) % 2,
-                minute=0,
-                second=0
-            ) + timedelta(days=1)
+            if not self.repo.index.diff("HEAD"):
+                # Commit vide si aucun changement (mais avec message utile)
+                self.repo.git.commit("--allow-empty", 
+                                    "-m", f"Daily maintenance {datetime.now().strftime('%d/%m')}")
+                print("Commit vide créé pour maintenir le streak")
+            else:
+                # Commit normal si modifications détectées
+                self.repo.index.commit(f"Maintenance update {datetime.now().strftime('%d/%m %H:%M')}")
+                print("Commit standard avec modifications")
+
+            self.repo.git.push()
+            return True
+
+        except Exception as e:
+            print(f"Erreur lors du commit: {str(e)}")
+            return False
+
+    def calculate_next_run(self):
+        """Calcule le prochain moment d'exécution entre 18h et 23h"""
+        now = datetime.now()
+        next_run = now.replace(
+            hour=WORKING_HOURS[0] + hash(now.date()) % (WORKING_HOURS[1] - WORKING_HOURS[0]),
+            minute=0,
+            second=0
+        )
+        
+        # Si l'heure est déjà passée aujourd'hui, on planifie pour demain
+        if next_run < now:
+            next_run += timedelta(days=1)
             
-            sleep_time = (next_run - datetime.now()).total_seconds()
-            print(f"Prochain commit à {next_run}")
-            time.sleep(sleep_time)
-            
-    except KeyboardInterrupt:
-        print("Arrêt manuel du script")
-    finally:
-        print("Maintenance automatique terminée")
+        return next_run
+
+    def run(self):
+        """Exécute la boucle principale"""
+        print(f"Début de la maintenance automatique jusqu'au {self.end_date.strftime('%A %d %B')}")
+        
+        while datetime.now() < self.end_date:
+            try:
+                if self.make_commit():
+                    next_run = self.calculate_next_run()
+                    wait_seconds = (next_run - datetime.now()).total_seconds()
+                    
+                    if wait_seconds > 0:
+                        print(f"Prochain commit à {next_run.strftime('%H:%M')}")
+                        time.sleep(wait_seconds)
+                
+            except KeyboardInterrupt:
+                print("\nArrêt manuel du script")
+                break
+            except Exception as e:
+                print(f"Erreur inattendue: {e}. Nouvelle tentative dans 1h")
+                time.sleep(3600)
+
+        print("Maintenance automatique terminée comme prévu")
 
 if __name__ == "__main__":
-    main()
+    manager = MaintenanceManager()
+    manager.run()
